@@ -1,0 +1,21 @@
+services:
+  api:
+    build: .
+    container_name: ai-explainer-api
+    env_file:
+      - .env
+    environment:
+      - TZ=${TZ}
+      - PYTHONPATH=/app/src
+    expose:
+      - "8000"
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: ai-explainer-nginx
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
