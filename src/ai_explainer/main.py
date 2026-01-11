@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
+from ai_explainer.auth import require_firebase_user
 from ai_explainer.db import get_db
 from ai_explainer.evidence import build_evidence_bundle, build_evidence_bundle_from_details
 from ai_explainer.llm_explain import stream_explanation
@@ -23,7 +24,10 @@ def health():
 
 
 @app.get("/debug/db")
-async def debug_db(db: AsyncSession = Depends(get_db)):
+async def debug_db(
+    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(require_firebase_user),
+):
     try:
         await db.execute(text("SELECT 1"))
     except Exception as exc:
@@ -32,7 +36,11 @@ async def debug_db(db: AsyncSession = Depends(get_db)):
 
 
 @app.get("/debug/result/{result_id}")
-async def debug_result(result_id: str, db: AsyncSession = Depends(get_db)):
+async def debug_result(
+    result_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(require_firebase_user),
+):
     row = await db.get(AnalysisResult, result_id)
     if not row:
         raise HTTPException(status_code=404, detail="result_id not found")
@@ -44,7 +52,11 @@ async def debug_result(result_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @app.get("/v1/explain/{result_id}/stream")
-async def explain_stream(result_id: str, db: AsyncSession = Depends(get_db)):
+async def explain_stream(
+    result_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(require_firebase_user),
+):
     if result_id == "uuid":
         log = get_mock_log(result_id)
         if not log:
