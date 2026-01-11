@@ -4,8 +4,8 @@ import json
 import os
 from typing import AsyncGenerator
 
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, HumanMessage
 
 from ai_explainer.evidence import EvidenceBundle
 
@@ -42,15 +42,15 @@ TONE:
 MANDATORY CONTENT:
 You MUST always include:
 - A clear one-line conclusion about the risk level
-- A short explanation of WHY this risk level was assigned
+- A short explanation of WHY this risk level was assigned (facts only)
 - A numbered list of concrete actions the user should take now
 - A warning that personal information or login should NOT be entered
 - Limitations of the analysis if provided (e.g., PARTIAL coverage, CAPTCHA)
 
 OUTPUT FORMAT (STRICT):
-1) One-line conclusion (start with "위험:", "주의:", or "참고:")
+1) One-line conclusion (start with "위험:", "주의:", or "상대적 안전:")
 2) Why this decision was made (bullet points, based ONLY on evidence)
-3) What you should do now (numbered list, 3–6 items)
+3) What you should do now (numbered list, 3~5 items)
 4) Limitations (only if provided)
 
 LANGUAGE:
@@ -81,7 +81,7 @@ async def stream_explanation(bundle: EvidenceBundle) -> AsyncGenerator[str, None
 
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),
-        HumanMessage(content="아래 JSON만 근거로 사용자에게 설명문을 작성해줘:\n" + json.dumps(payload, ensure_ascii=False)),
+        HumanMessage(content="아래 JSON 근거로만 설명문을 작성해 주세요:\n" + json.dumps(payload, ensure_ascii=False)),
     ]
 
     async for chunk in llm.astream(messages):

@@ -11,9 +11,12 @@ fastapi = "^0.128.0"
 uvicorn = {extras = ["standard"], version = "^0.40.0"}
 sse-starlette = "^3.1.2"
 pydantic = "^2.12.5"
+pydantic-settings = "^2.11.0"
 langchain = "^1.2.1"
 langchain-openai = "^1.1.6"
 langchain-core = "^1.2.6"
+sqlalchemy = "^2.0.43"
+asyncmy = "^0.2.10"
 
 
 [tool.poetry.group.dev.dependencies]
