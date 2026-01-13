@@ -16,9 +16,11 @@ class EvidenceItem(BaseModel):
 class EvidenceBundle(BaseModel):
     request_id: str
     extracted_url: str
+    target_url: str = ""
+    final_url: str = ""
     raw_text: str = ""
     risk_level: str
-    risk_score: int
+    risk_score: float
     screenshot: Optional[Dict[str, str]] = None
     redirect_chain: List[Dict[str, Any]] = Field(default_factory=list)
     evidence: List[EvidenceItem] = Field(default_factory=list)
@@ -114,7 +116,7 @@ def build_evidence_bundle(log: Dict[str, Any]) -> EvidenceBundle:
 
     summary = log.get("summary") or {}
     risk_level = str(summary.get("risk_level") or "UNKNOWN")
-    risk_score = int(summary.get("risk_score") or 0)
+    risk_score = _parse_risk_score(summary.get("risk_score"))
 
     screenshot = log.get("visual_snapshot_storage")
 
@@ -130,6 +132,7 @@ def build_evidence_bundle(log: Dict[str, Any]) -> EvidenceBundle:
     return EvidenceBundle(
         request_id=request_id,
         extracted_url=extracted_url,
+        target_url=extracted_url,
         raw_text=raw_text,
         risk_level=risk_level,
         risk_score=risk_score,
@@ -144,10 +147,12 @@ def build_evidence_bundle(log: Dict[str, Any]) -> EvidenceBundle:
 def build_evidence_bundle_from_details(result_id: str, payload: Dict[str, Any]) -> EvidenceBundle:
     summary = payload.get("summary") or {}
     risk_level = str(summary.get("risk_level") or "UNKNOWN")
-    risk_score = int(summary.get("risk_score") or 0)
+    risk_score = _parse_risk_score(summary.get("risk_score"))
 
-    extracted_url = str(payload.get("target_url") or "")
-    screenshot = payload.get("visual_snapshot_storage")
+    target_url = str(payload.get("target_url") or "")
+    final_url = str(payload.get("final_url") or "")
+    extracted_url = target_url or final_url
+    screenshot = payload.get("screenshot") or payload.get("visual_snapshot_storage")
 
     details = payload.get("details") or {}
     redirect_chain = details.get("redirect_chain") or []
@@ -160,6 +165,8 @@ def build_evidence_bundle_from_details(result_id: str, payload: Dict[str, Any]) 
     return EvidenceBundle(
         request_id=result_id,
         extracted_url=extracted_url,
+        target_url=target_url,
+        final_url=final_url,
         raw_text="",
         risk_level=risk_level,
         risk_score=risk_score,
@@ -169,3 +176,12 @@ def build_evidence_bundle_from_details(result_id: str, payload: Dict[str, Any]) 
         coverage=coverage,
         limitations=limitations,
     )
+
+
+def _parse_risk_score(value: Any) -> float:
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
