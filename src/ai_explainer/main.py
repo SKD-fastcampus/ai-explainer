@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import AsyncGenerator
 
@@ -13,7 +12,11 @@ from sse_starlette.sse import EventSourceResponse
 from ai_explainer.auth import require_firebase_user
 from ai_explainer.db import get_db
 from ai_explainer.evidence import build_evidence_bundle, build_evidence_bundle_from_details
-from ai_explainer.llm_explain import stream_explanation, stream_message_safety_explanation
+from ai_explainer.llm_explain import (
+    stream_explanation,
+    stream_message_safety_explanation,
+    stream_message_safety_explanation_multi,
+)
 from ai_explainer.models import AnalysisResult
 from ai_explainer.mock_store import get_mock_log
 
@@ -25,13 +28,14 @@ class MessageSafetyRequest(BaseModel):
     safe_browsing_result: str = ""
 
 
-async def _stream_cached_summary(text: str) -> AsyncGenerator[str, None]:
-    if not text:
-        return
-    chunk_size = 20
-    for i in range(0, len(text), chunk_size):
-        await asyncio.sleep(0.02)
-        yield text[i:i + chunk_size]
+class MessageSafetyMultiItem(BaseModel):
+    link: str
+    safe_browsing_result: str = ""
+
+
+class MessageSafetyMultiRequest(BaseModel):
+    message: str
+    items: list[MessageSafetyMultiItem]
 
 
 @app.get("/health")
@@ -68,13 +72,17 @@ async def debug_result(
 
 
 class ExplainStreamRequest(BaseModel):
+    result_ids: list[str]
+
+
+class ExplainSingleStreamRequest(BaseModel):
     message: str | None = None
 
 
 @app.post("/v1/explain/{result_id}/stream")
-async def explain_stream(
+async def explain_single_stream(
     result_id: str,
-    payload: ExplainStreamRequest,
+    payload: ExplainSingleStreamRequest,
     db: AsyncSession = Depends(get_db),
     _: dict = Depends(require_firebase_user),
 ):
@@ -84,20 +92,21 @@ async def explain_stream(
             raise HTTPException(status_code=404, detail="mock data not found")
         bundle = build_evidence_bundle(log)
         status_value = log.get("status")
-        cached_summary = None
     else:
         row = await db.get(AnalysisResult, result_id)
         if not row or not row.details:
             raise HTTPException(status_code=404, detail="result_id not found")
         bundle = build_evidence_bundle_from_details(result_id, row.details)
         status_value = row.status
-        cached_summary = row.llm_summary if not payload.message else None
+
+    if payload.message:
+        bundle = bundle.model_copy(update={"raw_text": payload.message})
 
     async def gen() -> AsyncGenerator[dict, None]:
         yield {"event": "meta", "data": json.dumps({
             "result_id": bundle.request_id,
             "url": bundle.extracted_url,
-            "message": payload.message,
+            "message": bundle.raw_text,
             "risk_level": bundle.risk_level,
             "risk_score": bundle.risk_score,
             "screenshot": bundle.screenshot,
@@ -110,29 +119,78 @@ async def explain_stream(
             "evidence": [e.model_dump() for e in bundle.evidence],
         }, ensure_ascii=False)}
 
-        if cached_summary:
-            async for token in _stream_cached_summary(cached_summary):
-                yield {
-                    "event": "delta",
-                    "data": json.dumps({"text": token}, ensure_ascii=False),
-                }
-        else:
-            collected: list[str] = []
-            async for token in stream_explanation(bundle, message=payload.message):
-                collected.append(token)
-                yield {
-                    "event": "delta",
-                    "data": json.dumps({"text": token}, ensure_ascii=False),
-                }
-            if result_id != "uuid" and not payload.message:
-                full_text = "".join(collected)
-                row.llm_summary = full_text
-                if not row.message_text:
-                    row.message_text = payload.message or None
-                try:
-                    await db.commit()
-                except Exception:
-                    await db.rollback()
+        async for token in stream_explanation([bundle]):
+            yield {
+                "event": "delta",
+                "data": json.dumps({"text": token}, ensure_ascii=False),
+            }
+
+        yield {
+            "event": "done",
+            "data": json.dumps({"status": "OK"}, ensure_ascii=False),
+        }
+
+    return EventSourceResponse(gen())
+
+
+@app.post("/v1/explain/stream")
+async def explain_stream(
+    payload: ExplainStreamRequest,
+    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(require_firebase_user),
+):
+    if not payload.result_ids:
+        raise HTTPException(status_code=400, detail="result_ids is required")
+
+    bundles: list = []
+    status_values: list[str | None] = []
+
+    for result_id in payload.result_ids:
+        if result_id == "uuid":
+            log = get_mock_log(result_id)
+            if not log:
+                continue
+            bundles.append(build_evidence_bundle(log))
+            status_values.append(log.get("status"))
+            continue
+
+        row = await db.get(AnalysisResult, result_id)
+        if not row or not row.details:
+            continue
+        bundles.append(build_evidence_bundle_from_details(result_id, row.details))
+        status_values.append(row.status)
+
+    if not bundles:
+        raise HTTPException(status_code=404, detail="result_id not found")
+
+    async def gen() -> AsyncGenerator[dict, None]:
+        meta_items = []
+        evidence_items = []
+        for bundle, status_value in zip(bundles, status_values):
+            meta_items.append({
+                "result_id": bundle.request_id,
+                "url": bundle.extracted_url,
+                "message": bundle.raw_text,
+                "risk_level": bundle.risk_level,
+                "risk_score": bundle.risk_score,
+                "screenshot": bundle.screenshot,
+                "status": status_value,
+            })
+            evidence_items.append({
+                "result_id": bundle.request_id,
+                "coverage": bundle.coverage,
+                "limitations": bundle.limitations,
+                "evidence": [e.model_dump() for e in bundle.evidence],
+            })
+
+        yield {"event": "meta", "data": json.dumps({"items": meta_items}, ensure_ascii=False)}
+        yield {"event": "evidence", "data": json.dumps({"items": evidence_items}, ensure_ascii=False)}
+
+        async for token in stream_explanation(bundles):
+            yield {
+                "event": "delta",
+                "data": json.dumps({"text": token}, ensure_ascii=False),
+            }
 
         yield {
             "event": "done",
@@ -156,6 +214,37 @@ async def explain_message_stream(
         async for token in stream_message_safety_explanation(
             payload.message,
             payload.safe_browsing_result,
+        ):
+            yield {
+                "event": "delta",
+                "data": json.dumps({"text": token}, ensure_ascii=False),
+            }
+
+        yield {
+            "event": "done",
+            "data": json.dumps({"status": "OK"}, ensure_ascii=False),
+        }
+
+    return EventSourceResponse(gen())
+
+
+@app.post("/v1/message/explain/multi/stream")
+async def explain_message_multi_stream(
+    payload: MessageSafetyMultiRequest,
+    _: dict = Depends(require_firebase_user),
+):
+    if not payload.items:
+        raise HTTPException(status_code=400, detail="items is required")
+
+    async def gen() -> AsyncGenerator[dict, None]:
+        yield {"event": "meta", "data": json.dumps({
+            "message": payload.message,
+            "items": [item.model_dump() for item in payload.items],
+        }, ensure_ascii=False)}
+
+        async for token in stream_message_safety_explanation_multi(
+            payload.message,
+            [item.model_dump() for item in payload.items],
         ):
             yield {
                 "event": "delta",
