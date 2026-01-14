@@ -73,6 +73,7 @@ async def debug_result(
 
 class ExplainStreamRequest(BaseModel):
     result_ids: list[str]
+    message: str | None = None
 
 
 class ExplainSingleStreamRequest(BaseModel):
@@ -162,6 +163,9 @@ async def explain_stream(
 
     if not bundles:
         raise HTTPException(status_code=404, detail="result_id not found")
+
+    if payload.message:
+        bundles = [bundle.model_copy(update={"raw_text": payload.message}) for bundle in bundles]
 
     async def gen() -> AsyncGenerator[dict, None]:
         meta_items = []
