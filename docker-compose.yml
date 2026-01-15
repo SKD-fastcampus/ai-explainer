@@ -25,3 +25,12 @@ services:
       - ./secrets/letsencrypt:/etc/letsencrypt:ro
       - ./secrets/certbot/www:/var/www/certbot:ro
       - ./secrets/certs:/etc/nginx/certs:ro
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: ai-explainer-certbot
+    volumes:
+      - ./secrets/certbot/www:/var/www/certbot
+      - ./secrets/letsencrypt:/etc/letsencrypt
+    entrypoint: >
+      sh -c "trap exit TERM; while :; do sleep 12h & wait ${!}; certbot renew --webroot -w /var/www/certbot; done"
