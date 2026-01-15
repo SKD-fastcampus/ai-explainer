@@ -4,6 +4,7 @@ import json
 from typing import AsyncGenerator
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +22,14 @@ from ai_explainer.models import AnalysisResult
 from ai_explainer.mock_store import get_mock_log
 
 app = FastAPI(title="AI Explainer", version="0.1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://detective-crab.vercel.app"],
+    allow_credentials=True,
+    allow_methods=["POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 
 class MessageSafetyRequest(BaseModel):
