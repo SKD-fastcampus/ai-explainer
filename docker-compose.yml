@@ -33,4 +33,4 @@ services:
       - ./secrets/certbot/www:/var/www/certbot
       - ./secrets/letsencrypt:/etc/letsencrypt
     entrypoint: >
-      sh -c "trap exit TERM; while :; do sleep 12h & wait ${!}; certbot renew --webroot -w /var/www/certbot; done"
+      sh -c "trap exit TERM; while :; do sleep 12h & wait $${!}; certbot renew --webroot -w /var/www/certbot; done"
